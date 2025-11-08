@@ -56,11 +56,18 @@ async def data_consumer_task(data_queue: Queue):
     y los envía a los clientes WebSocket.
     """
     global USER
+    global PID
+    global FILTER
     print("Iniciando consumidor de datos (WebSocket)...")
     while True:
         data = await data_queue.get()
+
         if data["type"] == "user_params":
             USER = UserParams(**data["payload"])
+        if data["type"] == "pid_value":
+            PID = PidValue(**data["payload"])
+        if data["type"] == "filter_value":
+            FILTER = FilterValue(**data["payload"])
 
         await manager.broadcast_json(data)
 
@@ -151,12 +158,10 @@ cmd = {
 async def set_cmd(key:str, arg):
     await run_in_threadpool(command_queue.put, f"set {cmd[key]} {arg}")
 
-from dataclasses import fields
-
 async def set_(new, prev):
     if new != prev and prev != None:
         for r in cmd.keys():
-            if r in fields(type(new)):
+            if r in new.model_fields.keys():
                 if getattr(new, r) != getattr(prev,r):
                     await set_cmd(r, getattr(new, r))
 
@@ -165,25 +170,24 @@ async def set_user_params(data: UserParams):
     await set_(data, USER)
     return {
         "status":"ok",
-        "message": USER
+        "message": data
     }
     
 async def set_pid_params(data: PidValue):
     global PID
-    if data != PID and PID != None:
-        for r in cmd.keys():
-            print(type(r))
-            if getattr(data, r) != getattr(PID,r):
-                await set_cmd(r, getattr(data, r))
+    await set_(data, PID)
     return {
         "status":"ok",
-        "message": USER
+        "message": data
     }
 
-async def set_filter_value(data: FilterValue):
-    await run_in_threadpool(command_queue.put, f"set kalman_R {data.r}")
-    await run_in_threadpool(command_queue.put, f"set kalman_Q {data.q}")
-    await run_in_threadpool(command_queue.put, f"set alpha {data.alpha}")
+async def set_filter_params(data: FilterValue):
+    global FILTER
+    await set_(data, FILTER)
+    return {
+        "status":"ok",
+        "message": data
+    }
 
 @app.post("/user_params")
 async def user_params(data: UserParams):
@@ -219,8 +223,8 @@ async def user_params():
     except Exception as e:
         return {"status": "error", "message": f"Error inesperado: {e}"}
 
-@app.post("/pid_control")
-async def pid_control(data: PidValue):
+@app.post("/pid_params")
+async def pid_params(data: PidValue):
     """
     Endpoint HTTP para enviar un comando al Hilo Guardián.
     """
@@ -229,11 +233,9 @@ async def pid_control(data: PidValue):
             
     # Usamos run_in_threadpool para llamar a 'put' (que es bloqueante)
     # de forma segura sin bloquear el bucle de eventos de FastAPI.
-    await set_pid_params(data)
+    return await set_pid_params(data)
 
-    return {"status": "comando_enviado"}
-
-@app.get("/pid_control")
+@app.get("/pid_params")
 async def pid_control():
     """
     Endpoint HTTP para enviar un comando al Hilo Guardián. 
@@ -245,7 +247,7 @@ async def pid_control():
     
     return {"status": "comando_enviado"}
 
-@app.post("/filter_value")
+@app.post("/filter_params")
 async def filter_value(data: FilterValue):
     """
     Endpoint HTTP para enviar un comando al Hilo Guardián.
@@ -255,11 +257,9 @@ async def filter_value(data: FilterValue):
             
     # Usamos run_in_threadpool para llamar a 'put' (que es bloqueante)
     # de forma segura sin bloquear el bucle de eventos de FastAPI.
-    await set_filter_value(data)
+    return await set_filter_params(data)
 
-    return {"status": "comando_enviado"}
-
-@app.get("/filter_value")
+@app.get("/filter_params")
 async def filter_value():
     """
     Endpoint HTTP para enviar un comando al Hilo Guardián.
@@ -275,7 +275,7 @@ async def filter_value():
 async def set_params(r: FormUser):
     
     # await set_pid_params(r.pidValue)
-    await set_user_params(r.userParams)
+    return await set_user_params(r.userParams)
     # await set_filter_value(r.filterValue)
 
-    return {"status": "comando_enviado"}
+    
