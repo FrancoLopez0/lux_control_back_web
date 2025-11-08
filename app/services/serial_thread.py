@@ -6,6 +6,7 @@ from schemas.pid_value import PidValue
 from schemas.sensors_value import SensorsValue
 from schemas.sys_log import SysLog
 from schemas.user_params import UserParams
+from schemas.user_log import UserLog
 import typing
 import serial
 from pydantic import ValidationError
@@ -23,12 +24,13 @@ BAUD_RATE = 115200
 
 
 MODELS = {
+    "user_log": UserLog,
     "user_params": UserParams,
     "lux_value": LuxValue,
     "filter_value": FilterValue,
     "pid_value": PidValue,
     "sensors_value": SensorsValue,
-    "control_value": ControlValue
+    "control_value": ControlValue,
 }
 
 def infer_and_tag_data(data: Dict[str, Any]) -> Dict[str, Any] | None:
@@ -38,7 +40,25 @@ def infer_and_tag_data(data: Dict[str, Any]) -> Dict[str, Any] | None:
     """
     message = {}
 
+    # print(f"Infer y TAG : {data}")
+
+    # if "time" in data.keys():
+    #     print("Probando con user log....")
+    #     try:
+    #         validated_model = UserLog(**data)
+            
+    #         # Si tiene éxito, convertir el modelo validado a un diccionario,
+    #         # añadir el campo 'type' e interrumpir el bucle.
+    #         tagged_data = validated_model.model_dump() # Convierte el modelo Pydantic a dict
+    #         message["payload"] = tagged_data
+    #         message["type"] = "user_log"
+    #         return message
+    #     except:
+    #         pass
+
+
     for type_name, model_class in MODELS.items():
+        
         try:
             # Intentar crear una instancia del modelo con los datos
             # Esto valida tipos, campos requeridos y estructura.
@@ -50,6 +70,7 @@ def infer_and_tag_data(data: Dict[str, Any]) -> Dict[str, Any] | None:
             message['payload'] = tagged_data
             message['type'] = type_name
             
+
             return message
 
         except ValidationError:
@@ -58,6 +79,7 @@ def infer_and_tag_data(data: Dict[str, Any]) -> Dict[str, Any] | None:
             continue
             
     # Si el bucle termina sin un match
+    # print(data)
     print("Error: Los datos no coinciden con ninguna estructura de modelo conocida.")
     return None
 
@@ -117,21 +139,25 @@ def serial_worker(loop, data_queue:Queue):
                 # print(f"[Hilo Serie] Respuesta: {response}") # (Descomentar para debug)
                 # Paso a Json los datos del microcontrolador
                 try:
-                    raw_data = response.split(",")
+                    raw_data = response.replace(" ","").split(",")
                     data = {}
 
                     for item in raw_data:
                         key, value = item.split(":")
                         key = key.replace(" ", "")
-
+                        
                         if(key == "time"):
-                            data[key] = str(value).replace(" ", "")
-                            continue
-                        try:
-                            data[key] = int(value)
-                        except ValueError:
-                            data[key] = float(value)
+                            data[key] = value.replace(" ", "")
+                            # if len(data[key])>3: 
+                            # print(value)
+                        else:
+                            try:
+                                data[key] = int(value)
+                            except ValueError:
+                                data[key] = float(value)
+                        
                             
+
                     data = infer_and_tag_data(data)
 
                     if data is None:
@@ -149,7 +175,7 @@ def serial_worker(loop, data_queue:Queue):
                     print(f"[Hilo Serie] Hardware response: {response}")
                     print(f"[Hilo Serie] FastAPI response: {data}")
                     
-                except (IndexError, ValueError):
+                except ( ValueError):
                     print(f"[Hilo Serie] Error al parsear respuesta: {response}")
 
             # 6. Esperar antes de la próxima lectura

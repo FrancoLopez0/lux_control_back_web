@@ -6,7 +6,7 @@ import time
 from pydantic import dataclasses
 from dataclasses import dataclass
 from pydantic import BaseModel, ValidationError
-from typing import Dict, Any
+from typing import Dict, Any, List
 from queue import Queue, Empty
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from contextlib import asynccontextmanager
@@ -18,6 +18,7 @@ from schemas.pid_value import PidValue
 from schemas.sensors_value import SensorsValue
 from schemas.sys_log import SysLog
 from schemas.user_params import UserParams
+from schemas.user_log import UserLog
 from core.serial_events import SERIAL_STOP_EVENT
 
 import requests
@@ -29,6 +30,7 @@ from services.serial_thread import serial_worker, command_queue
 USER:UserParams|None = None
 PID:PidValue|None = None
 FILTER:FilterValue|None = None
+LOGS:List[UserLog] = []
 
 class ConnectionManager:
     def __init__(self):
@@ -68,6 +70,9 @@ async def data_consumer_task(data_queue: Queue):
             PID = PidValue(**data["payload"])
         if data["type"] == "filter_value":
             FILTER = FilterValue(**data["payload"])
+        if data["type"] == "user_log":
+            LOGS.append(UserLog(**data["payload"]))
+            print(f"LOGS: {LOGS}")
 
         await manager.broadcast_json(data)
 
@@ -277,5 +282,15 @@ async def set_params(r: FormUser):
     # await set_pid_params(r.pidValue)
     return await set_user_params(r.userParams)
     # await set_filter_value(r.filterValue)
+
+@app.post("/logs")
+async def get_logs():
+    await run_in_threadpool(command_queue.put, f"get logs {20}")
+    return {"status":"Actualizando logs"}
+
+@app.get("/logs")
+async def get_logs():
+    # await run_in_threadpool(command_queue.put, f"get logs {20}")
+    return {"status":"ok", "logs":LOGS}
 
     
