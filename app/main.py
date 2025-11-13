@@ -1,6 +1,6 @@
 import asyncio
 from asyncio import Future
-import serial
+# import serial
 import threading
 import time
 from pydantic import dataclasses
@@ -20,6 +20,9 @@ from schemas.sys_log import SysLog
 from schemas.user_params import UserParams
 from schemas.user_log import UserLog
 from core.serial_events import SERIAL_STOP_EVENT
+from collections import deque
+import numpy as np
+
 
 import requests
 from fastapi.middleware.cors import CORSMiddleware
@@ -31,6 +34,67 @@ USER:UserParams|None = None
 PID:PidValue|None = None
 FILTER:FilterValue|None = None
 LOGS:List[UserLog] = []
+
+def detectar_oscilacion_sostenida_deque(data_deque, N_ventanas=5, tamano_ventana=10, tolerancia=0.1):
+    """
+    Detecta si el valor pico a pico se mantiene constante (oscilación sostenida)
+    en un deque, ideal para datos en tiempo real.
+
+    Args:
+        data_deque (collections.deque): Deque (cola) con las últimas muestras de la señal.
+        N_ventanas (int): Número de 'ventanas' de amplitud (rangos) a comparar.
+                          Debe ser <= len(data_deque) // tamano_ventana.
+        tamano_ventana (int): Número de muestras en cada sub-ventana para calcular el rango.
+        tolerancia (float): Máxima variación (como porcentaje del rango promedio)
+                            permitida para considerar la amplitud como "constante".
+
+    Returns:
+        bool: True si se detecta una oscilación sostenida, False en caso contrario.
+    """
+    data = np.array(list(data_deque))
+    
+    # 1. Verificar si hay suficientes datos para la ventana mínima de análisis
+    min_muestras = tamano_ventana * N_ventanas
+    if len(data) < min_muestras:
+        # Se necesita al menos el número de muestras para calcular N_ventanas completas
+        return False
+    
+    # Nos aseguramos de tener solo las últimas muestras necesarias
+    data_reciente = data[-min_muestras:]
+
+    # 2. Calcular los Rangos (Pico a Pico) de las sub-ventanas
+    rangos_pico_a_pico = []
+    
+    # Dividimos el segmento reciente en N_ventanas para evaluar la amplitud
+    for i in range(N_ventanas):
+        inicio = i * tamano_ventana
+        fin = inicio + tamano_ventana
+        
+        ventana = data_reciente[inicio:fin]
+        rango = np.max(ventana) - np.min(ventana)
+        
+        # Opcional: Ignorar rangos muy pequeños (podría ser ruido)
+        if rango > 0.01: 
+             rangos_pico_a_pico.append(rango)
+
+    # Si no se detectaron suficientes rangos, es mejor salir
+    if len(rangos_pico_a_pico) < N_ventanas:
+        return False
+
+    # 3. Analizar la constancia de los rangos calculados
+    rangos_a_evaluar = np.array(rangos_pico_a_pico)
+    max_diferencia_rango = np.max(rangos_a_evaluar) - np.min(rangos_a_evaluar)
+    rango_promedio = np.mean(rangos_a_evaluar)
+
+    # 4. Criterio de Oscilación Sostenida
+    # La variación debe ser menor que la tolerancia aplicada al rango promedio.
+    if max_diferencia_rango < (tolerancia * rango_promedio):
+        return True
+    else:
+        return False
+
+TAMANO_DEQUE = 50 
+lux_values = deque(maxlen=TAMANO_DEQUE)
 
 class ConnectionManager:
     def __init__(self):
@@ -73,6 +137,8 @@ async def data_consumer_task(data_queue: Queue):
         if data["type"] == "user_log":
             LOGS.append(UserLog(**data["payload"]))
             print(f"LOGS: {LOGS}")
+        if data["type"] == "lux_value":
+            lux_values.append(data["payload"]["lux"])
 
         await manager.broadcast_json(data)
 
@@ -288,9 +354,23 @@ async def get_logs():
     await run_in_threadpool(command_queue.put, f"get logs {20}")
     return {"status":"Actualizando logs"}
 
-@app.get("/logs")
+@app.post("/toggle")
 async def get_logs():
-    # await run_in_threadpool(command_queue.put, f"get logs {20}")
-    return {"status":"ok", "logs":LOGS}
+    await run_in_threadpool(command_queue.put, f"toggle")
+    return {"status":"Toggle"}
 
+@app.post("/continue")
+async def set_continue():
+    await run_in_threadpool(command_queue.put, f"continue")
+    return {"status":"Toggle"}
+
+@app.post("/stop")
+async def set_stop():
+    await run_in_threadpool(command_queue.put, f"stop")
+    return {"status":"Toggle"}
+
+# @app.post("/tune")
+# async def set_tune():
+#     while True:
+#         time.sleep(5)
     

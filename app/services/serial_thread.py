@@ -8,7 +8,7 @@ from schemas.sys_log import SysLog
 from schemas.user_params import UserParams
 from schemas.user_log import UserLog
 import typing
-import serial
+# import serial
 from pydantic import ValidationError
 import time
 
@@ -83,6 +83,16 @@ def infer_and_tag_data(data: Dict[str, Any]) -> Dict[str, Any] | None:
     print("Error: Los datos no coinciden con ninguna estructura de modelo conocida.")
     return None
 
+def raspi_write_uart(msg:str):
+    with open('/dev/lux_control', 'w') as f:    
+        f.write(msg + '\n')
+
+def raspi_read_uart()->str:
+    r = ''
+    with open('/dev/lux_control', 'r') as f:
+        r = f.read()
+    return r
+
 def serial_worker(loop, data_queue:Queue):
     """
     Este es el HILO que corre por separado.
@@ -106,9 +116,9 @@ def serial_worker(loop, data_queue:Queue):
 
     try:
         # 1. Abrimos el puerto UNA SOLA VEZ
-        ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=0.5)
+        # ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=0.5)
         time.sleep(2) # Espera a que el dispositivo se estabilice
-        print(f"Puerto {SERIAL_PORT} abierto exitosamente.")
+        # print(f"Puerto {SERIAL_PORT} abierto exitosamente.")
         
         while not SERIAL_STOP_EVENT.is_set():
             # 2. Revisar si hay comandos entrantes desde FastAPI
@@ -122,14 +132,16 @@ def serial_worker(loop, data_queue:Queue):
                             continue
                 command = r
                 print(f"[Hilo Serie] Recibido comando: {command}")
-                ser.write(f"{command}\n".encode('utf-8'))
+                # ser.write(f"{command}\n".encode('utf-8'))
+                raspi_write_uart(command)
             
             # 3. Enviar el comando de sondeo periódico
             # ser.write(b"get_status\n")
             
             # 4. Leer la respuesta
             try:
-                response = ser.readline().decode('utf-8').strip()
+                # response = ser.readline().decode('utf-8').strip()
+                response = raspi_read_uart()
             except UnicodeDecodeError:
                 print("Error en decodificacion")
                 response = None
@@ -181,17 +193,21 @@ def serial_worker(loop, data_queue:Queue):
             # 6. Esperar antes de la próxima lectura
             SERIAL_STOP_EVENT.wait(0.1)
             
-        if ser and ser.is_open:
-            ser.close()
-            print("[Hilo Serie] Puerto serie cerrado.")
+        # if ser and ser.is_open:
+        #     ser.close()
+        #     print("[Hilo Serie] Puerto serie cerrado.")
 
-    except serial.SerialException as e:
-        print(f"[Hilo Serie] ERROR: {e}")
-        # Notificar al main thread que el puerto falló
-        data = {"error": str(e)}
-        loop.call_soon_threadsafe(data_queue.put_nowait, data)
+    # except serial.SerialException as e:
+    #     print(f"[Hilo Serie] ERROR: {e}")
+    #     # Notificar al main thread que el puerto falló
+    #     data = {"error": str(e)}
+    #     loop.call_soon_threadsafe(data_queue.put_nowait, data)
+
+    except:
+        print("Error")
         
     finally:
-        if ser and ser.is_open:
-            ser.close()
-            print("[Hilo Serie] Puerto serie cerrado.")
+        print("UART cerrado")
+        # if ser and ser.is_open:
+        #     ser.close()
+        #     print("[Hilo Serie] Puerto serie cerrado.")
